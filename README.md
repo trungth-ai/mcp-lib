@@ -1,6 +1,6 @@
 # HPU Library MCP Server — Bộ tài liệu kế hoạch
 
-> Trạng thái: **ĐANG CODE — Sprint 1 xong (2026-07-02).** Xem tiến độ sống ở
+> Trạng thái: **ĐANG CODE — Sprint 2 xong (2026-07-02).** Xem tiến độ sống ở
 > [docs/PLAN.md](docs/PLAN.md), quyết định implementation ở [docs/DECISIONS.md](docs/DECISIONS.md).
 > Bộ tài liệu này do lệnh `/plan-hpu-library-mcp` sinh ra, viết đầy đủ theo yêu
 > cầu (không dừng ở outline).

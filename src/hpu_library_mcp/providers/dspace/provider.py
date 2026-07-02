@@ -1,26 +1,37 @@
 """DSpaceProvider — hiện thực ResourceProvider cho nguồn 'dspace', GĐ 6.3.
 
-Sprint 1 hiện thực: get, list_communities, list_collections, get_recent_items,
-get_bitstream_link, health. Các method còn lại (search, semantic_search, get_text,
-stats) thuộc Sprint 2-4, tạm raise NotImplementedYetError.
+Sprint 1: get, list_communities, list_collections, get_recent_items, get_bitstream_link,
+health. Sprint 2: search, stats — thiết kế lai (hybrid): Solr lo tìm/lọc/rank/highlight,
+REST (đã có từ Sprint 1) lo metadata chuẩn + access_level chính xác cho từng kết quả —
+xem docs/DECISIONS.md lý do không tin hoàn toàn vào field metadata của Solr.
+semantic_search, get_text thuộc Sprint 3-4, tạm raise NotImplementedYetError.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from hpu_library_mcp.config import Settings
-from hpu_library_mcp.errors import ForbiddenError, NotFoundError, NotImplementedYetError, UpstreamError
+from hpu_library_mcp.errors import (
+    ForbiddenError,
+    NotFoundError,
+    NotImplementedYetError,
+    SolrBadRequestError,
+    UpstreamError,
+)
 from hpu_library_mcp.logging_setup import get_logger
 from hpu_library_mcp.models import (
     AccessLevel,
     BitstreamLink,
     Chunk,
+    Citation,
     DocumentText,
     Health,
     Node,
     Resource,
     SearchResult,
+    SearchResultItem,
     Stats,
 )
 from hpu_library_mcp.providers.base import ResourceProvider
@@ -33,6 +44,14 @@ from hpu_library_mcp.providers.dspace.mapping import (
     map_community_to_node,
     map_item_to_resource,
 )
+from hpu_library_mcp.providers.dspace.solr_client import SolrClient
+from hpu_library_mcp.providers.dspace.solr_search import (
+    build_search_params,
+    facet_field_names,
+    parse_facet_stats_response,
+    parse_search_response,
+    strip_highlighting_params,
+)
 
 logger = get_logger(__name__)
 
@@ -44,7 +63,13 @@ _RECENT_ITEMS_OVERFETCH_CAP = 200
 class DSpaceProvider(ResourceProvider):
     source = "dspace"
 
-    def __init__(self, *, settings: Settings, client: DSpaceRestClient | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        client: DSpaceRestClient | None = None,
+        solr_client: SolrClient | None = None,
+    ) -> None:
         self._settings = settings
         self._client = client or DSpaceRestClient(
             base_url=settings.dspace_rest_base_url,
@@ -52,9 +77,15 @@ class DSpaceProvider(ResourceProvider):
             service_email=settings.dspace_service_email,
             service_password=settings.dspace_service_password.get_secret_value(),
         )
+        self._solr = solr_client or SolrClient(
+            base_url=settings.dspace_solr_base_url,
+            core=settings.dspace_solr_search_core,
+            timeout=settings.dspace_http_timeout_seconds,
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()
+        await self._solr.aclose()
 
     # --- helpers ---
 
@@ -184,7 +215,7 @@ class DSpaceProvider(ResourceProvider):
             return Health(status="down", detail="Không kết nối được DSpace REST.")
         return Health(status="ok")
 
-    # --- Sprint 2-4 (chưa hiện thực) ---
+    # --- Sprint 2 ---
 
     async def search(
         self,
@@ -197,7 +228,68 @@ class DSpaceProvider(ResourceProvider):
         page_size: int = 10,
         allowed_levels: tuple[AccessLevel, ...] | None = None,
     ) -> SearchResult:
-        raise NotImplementedYetError("search_library", "Sprint 2")
+        page = max(1, page)
+        page_size = max(1, min(page_size, 100))
+        settings = self._settings
+
+        params = build_search_params(
+            query=query,
+            scope=scope,
+            filters=filters,
+            facets=facets,
+            page=page,
+            page_size=page_size,
+            default_field=settings.dspace_solr_field_default,
+            fulltext_field=settings.dspace_solr_fulltext_field,
+            handle_field=settings.dspace_solr_field_handle,
+            resourcetype_field=settings.dspace_solr_field_resourcetype,
+            resourcetype_item_value=settings.dspace_solr_resourcetype_item,
+            collection_field=settings.dspace_solr_field_collection,
+            community_field=settings.dspace_solr_field_community,
+            year_field=settings.dspace_solr_field_year,
+            type_field=settings.dspace_solr_field_type,
+            author_field=settings.dspace_solr_field_author,
+        )
+
+        try:
+            raw = await self._solr.select(params)
+        except SolrBadRequestError:
+            if any(str(key).startswith("hl") for key, _ in params):
+                # Field full-text có thể sai tên/chưa index -> suy biến: bỏ highlight, thử lại.
+                logger.warning("solr_search_degraded_no_highlight")
+                raw = await self._solr.select(strip_highlighting_params(params))
+            else:
+                raise
+
+        total, hits, raw_facets = parse_search_response(raw, handle_field=settings.dspace_solr_field_handle)
+
+        async def _fetch_result_item(handle: str, highlights: list[str]) -> SearchResultItem | None:
+            try:
+                resource = await self.get(handle, allowed_levels=allowed_levels)
+            except (ForbiddenError, NotFoundError):
+                return None  # ẩn khỏi kết quả thay vì lỗi cả trang (06-test-plan §2.4)
+            except UpstreamError:
+                logger.warning("search_item_lookup_failed handle=%s", handle)
+                return None
+            return SearchResultItem(**resource.model_dump(), highlights=highlights)
+
+        fetched = await asyncio.gather(*(_fetch_result_item(handle, hl) for handle, hl in hits))
+        results = [item for item in fetched if item is not None]
+        citations = [Citation(id=item.id, url=item.url) for item in results]
+
+        field_to_facet_name = {
+            field: name
+            for name, field in facet_field_names(
+                type_field=settings.dspace_solr_field_type,
+                year_field=settings.dspace_solr_field_year,
+                author_field=settings.dspace_solr_field_author,
+            ).items()
+        }
+        facets_out = {field_to_facet_name.get(field, field): counts for field, counts in raw_facets.items()}
+
+        return SearchResult(
+            total=total, page=page, page_size=page_size, results=results, facets=facets_out, citations=citations
+        )
 
     async def semantic_search(
         self,
@@ -222,4 +314,34 @@ class DSpaceProvider(ResourceProvider):
     async def stats(
         self, *, group_by: list[str] | None = None, allowed_levels: tuple[AccessLevel, ...] | None = None
     ) -> Stats:
-        raise NotImplementedYetError("library_stats", "Sprint 2")
+        # allowed_levels chưa được lọc ở đây — lọc thống kê theo scope key thuộc Sprint 4
+        # (cần bảng api_keys + mapping access_level -> DSpace group id thật, chưa có).
+        settings = self._settings
+        group_by = group_by or ["type", "year"]
+        field_map = {
+            **facet_field_names(
+                type_field=settings.dspace_solr_field_type,
+                year_field=settings.dspace_solr_field_year,
+                author_field=settings.dspace_solr_field_author,
+            ),
+            "collection": settings.dspace_solr_field_collection,
+        }
+
+        params: list[tuple[str, Any]] = [
+            ("q", "*:*"),
+            ("rows", 0),
+            ("fq", f"{settings.dspace_solr_field_resourcetype}:{settings.dspace_solr_resourcetype_item}"),
+            ("facet", "true"),
+        ]
+        requested: list[tuple[str, str]] = []
+        for name in group_by:
+            field = field_map.get(name)
+            if field:
+                params.append(("facet.field", field))
+                requested.append((name, field))
+
+        raw = await self._solr.select(params)
+        total, raw_facets = parse_facet_stats_response(raw)
+
+        by = {name: raw_facets[field] for name, field in requested if field in raw_facets}
+        return Stats(total_items=total, by=by)

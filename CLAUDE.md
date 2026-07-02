@@ -41,9 +41,12 @@ src/hpu_library_mcp/
 │   ├── registry.py         — map source -> provider instance
 │   └── dspace/
 │       ├── auth.py         — login service account, giữ token trong RAM, tự refresh
-│       ├── client.py       — HTTP client mỏng, retry 1 lần khi 401
+│       ├── client.py       — HTTP client mỏng REST, retry 1 lần khi 401
 │       ├── mapping.py      — DC -> Resource, suy diễn access_level (05-security.md §4)
+│       ├── solr_client.py  — HTTP client mỏng Solr (select), 400 vs 5xx/timeout riêng biệt
+│       ├── solr_search.py  — xây query Solr + diễn giải response (facet, highlight)
 │       └── provider.py     — DSpaceProvider, hiện thực ResourceProvider cho DSpace 6.3
+│                              (search: Solr tìm/lọc/rank, REST cấp metadata+access_level)
 └── tests/                   — unit test (mock HTTP bằng respx, không cần mạng)
 ```
 
@@ -60,8 +63,11 @@ src/hpu_library_mcp/
 - **Máy Windows dev này KHÔNG có route LAN tới `10.1.0.205`** (đã thử `curl`, timeout).
   Sprint 0 (trinh sát Solr/REST thật) phải chạy từ máy có VPN/LAN nội bộ HPU, hoặc từ
   host MCP `10.1.0.207`. Cho tới khi đó, các giá trị sau vẫn là **GIẢ ĐỊNH CHƯA XÁC MINH**
-  (đã để trong config, không hardcode): tên Solr core (`search`), tên field full-text
-  (`fulltext`), hình dạng JSON `/rest/items/.../policy`, `ANONYMOUS_GROUP_ID = 0`.
+  (đã để trong config `Settings.dspace_solr_field_*`, không hardcode): tên Solr core
+  (`search`), field full-text (`fulltext`), field mặc định/handle/resourcetype/collection/
+  community/year/type/author, hình dạng JSON `/rest/items/.../policy`,
+  `ANONYMOUS_GROUP_ID = 0`. Nếu field sai, `search_library` báo lỗi `UPSTREAM_ERROR` hoặc
+  trả facet rỗng — không trả sai dữ liệu âm thầm (xem docs/DECISIONS.md Sprint 2).
 - Console Windows mặc định `cp1252` — in tiếng Việt trực tiếp ra terminal PowerShell/cmd
   có thể lỗi `UnicodeEncodeError`; set `PYTHONIOENCODING=utf-8` khi cần debug qua script.
 - DSpace REST 6.x: `/rest/items/{id}` cần **UUID nội bộ**, không nhận handle

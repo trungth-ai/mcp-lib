@@ -112,6 +112,38 @@ async def get_bitstream_link(item_id: str, bitstream_id: str, source: str = "dsp
     return link.model_dump(mode="json")
 
 
+@mcp.tool()
+@_handle_errors("search_library")
+async def search_library(
+    query: str,
+    source: str = "dspace",
+    scope: str = "metadata",
+    filters: dict[str, Any] | None = None,
+    facets: list[str] | None = None,
+    page: int = 1,
+    page_size: int = 10,
+) -> dict[str, Any]:
+    """Tìm theo từ khóa (metadata và/hoặc nội dung), có filter/facet/phân trang/highlight.
+
+    scope: "metadata" | "fulltext" | "both". filters có thể gồm collection, community,
+    year_from, year_to, type, author. facets: danh sách trong ["type","year","author"].
+    """
+    provider = get_registry().get(source)
+    result = await provider.search(
+        query, filters=filters, scope=scope, facets=facets, page=page, page_size=page_size
+    )
+    return result.model_dump(mode="json")
+
+
+@mcp.tool()
+@_handle_errors("library_stats")
+async def library_stats(source: str = "dspace", group_by: list[str] | None = None) -> dict[str, Any]:
+    """Thống kê số lượng tài liệu theo type/year/collection (qua facet Solr)."""
+    provider = get_registry().get(source)
+    stats = await provider.stats(group_by=group_by)
+    return stats.model_dump(mode="json")
+
+
 def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)

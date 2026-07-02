@@ -48,6 +48,17 @@ class UpstreamError(McpToolError):
         super().__init__(message)
 
 
+class SolrBadRequestError(UpstreamError):
+    """Solr trả 400 (thường do tên field cấu hình sai) — caller có thể thử suy biến.
+
+    Khác UpstreamError thường (5xx/timeout/mạng) ở chỗ đây là lỗi CẤU HÌNH (field không
+    tồn tại), không phải Solr đang down — nơi gọi có thể thử lại bớt tham số thay vì coi
+    là toàn bộ Solr chết.
+    """
+
+    code = "UPSTREAM_ERROR"
+
+
 class NotImplementedYetError(McpToolError):
     code = "NOT_IMPLEMENTED"
 

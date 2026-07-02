@@ -67,6 +67,36 @@ class FakeDSpaceRestClient:
         pass
 
 
+class FakeSolrClient:
+    """Thay thế SolrClient thật cho test provider — không gọi HTTP.
+
+    `responses` là 1 raw response (dùng cho mọi lần gọi) hoặc list các response/exception
+    trả tuần tự theo từng lần select() (dùng để test retry/suy biến).
+    """
+
+    def __init__(self, responses: Any) -> None:
+        self._responses = responses if isinstance(responses, list) else [responses]
+        self.calls: list[list[tuple[str, Any]]] = []
+
+    async def select(self, params: list[tuple[str, Any]]) -> Any:
+        self.calls.append(params)
+        index = min(len(self.calls) - 1, len(self._responses) - 1)
+        value = self._responses[index]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    async def aclose(self) -> None:
+        pass
+
+
+def solr_params_dict(params: list[tuple[str, Any]]) -> dict[str, list[Any]]:
+    out: dict[str, list[Any]] = {}
+    for key, value in params:
+        out.setdefault(key, []).append(value)
+    return out
+
+
 @pytest.fixture
 def sample_item() -> dict[str, Any]:
     import copy

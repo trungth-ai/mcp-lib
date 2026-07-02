@@ -15,9 +15,21 @@ class Settings(BaseSettings):
     dspace_rest_base_url: str = "http://10.1.0.205:8088/rest"
     dspace_solr_base_url: str = "http://10.1.0.205:8088/solr"
     # Tên core/field dưới đây là GIẢ ĐỊNH — xác minh ở Sprint 0 (xem 07-sprints.md).
-    # Cố tình để cấu hình được thay vì hardcode trong code.
+    # Cố tình để cấu hình được thay vì hardcode trong code. Field cấu trúc lõi của
+    # DSpace (search.resourcetype, handle) ổn định hơn field metadata (title/author/...)
+    # vốn tùy biến theo discovery.xml riêng của từng site — xem docs/DECISIONS.md.
     dspace_solr_search_core: str = "search"
     dspace_solr_fulltext_field: str = "fulltext"
+    # Field "catch-all" dùng làm df (default field) khi tìm theo metadata/cả hai.
+    dspace_solr_field_default: str = "default"
+    dspace_solr_field_handle: str = "handle"
+    dspace_solr_field_resourcetype: str = "search.resourcetype"
+    dspace_solr_resourcetype_item: str = "2"  # DSpace Constants.ITEM
+    dspace_solr_field_collection: str = "location.coll"
+    dspace_solr_field_community: str = "location.comm"
+    dspace_solr_field_year: str = "dc.date.issued_year"
+    dspace_solr_field_type: str = "dc.type_filter"
+    dspace_solr_field_author: str = "dc.contributor.author_filter"
     dspace_public_base_url: str = "https://lib.hpu.edu.vn"
 
     dspace_service_email: str = ""

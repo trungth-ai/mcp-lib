@@ -41,6 +41,44 @@ Bỏ qua `LICENSE`, `TEXT` (OCR nội bộ), `THUMBNAIL` — không phải nội
 tải. Nếu sau này cần trả cả bundle `TEXT` (vd cho pipeline Tầng 2/3 bóc text), nên tách
 hàm map riêng thay vì nới điều kiện lọc này (tránh rò rỉ file phụ ra `get_item`/`search`).
 
+## 2026-07-02 — Sprint 2
+
+### Thiết kế lai: Solr chỉ tìm/lọc/rank, REST cung cấp metadata + access_level
+**Vì sao**: khác REST API (cố định trong code Java DSpace, tôi nắm chắc hình dạng JSON),
+schema Solr Discovery **tùy biến theo `discovery.xml` riêng từng site** — tôi không đủ
+tin cậy để đoán đúng tên field Dublin Core trong Solr (vd field nào chứa `dc.title`,
+định dạng `dc.date.issued_year` hay khác). Quyết định: Solr chỉ cần trả về đúng
+**handle** của item khớp truy vấn (+ điểm/snippet); metadata thật và `access_level` lấy
+lại qua `provider.get()` (REST, đã có từ Sprint 1, đáng tin hơn). Đánh đổi: mỗi trang kết
+quả (mặc định 10) tốn thêm tối đa 10 cặp request REST (item + policy), chạy song song
+(`asyncio.gather`) để giảm độ trễ. Thu lại được: tự động có `access_level` chính xác +
+hậu kiểm quyền đúng yêu cầu 05-security.md §3, không cần đoán field metadata Solr.
+**Hệ quả**: nếu field Solr `handle` (config `dspace_solr_field_handle`) sai tên, toàn bộ
+search trả rỗng dù Solr có match — ưu tiên "rỗng nhưng an toàn" hơn "đoán bừa".
+
+### Ghép highlight theo VỊ TRÍ, không theo key của `highlighting` dict
+Solr trả `highlighting` là dict keyed theo `uniqueKey` của document — định dạng
+`uniqueKey` thật của core `search` (thường dạng `"<resourcetype>-<uuid>"`) chưa xác
+minh. Thay vì đoán, ghép `highlighting.values()` với `docs` theo đúng vị trí (index),
+và CHỈ tin khi số lượng 2 bên khớp nhau (`len(highlighting) == len(docs)`) — lệch thì bỏ
+toàn bộ highlight (rỗng), không suy đoán. An toàn vì ghép sai vị trí chỉ ảnh hưởng hiển
+thị đoạn trích, không ảnh hưởng phân quyền (access_level luôn tính lại qua REST, độc lập
+với dữ liệu Solr).
+
+### `total` trong `search_library` là `numFound` thô của Solr, CHƯA trừ item bị lọc quyền
+Vì lọc quyền xảy ra SAU khi Solr trả trang kết quả (qua REST, per-item), tính `total`
+chính xác sau lọc sẽ cần quét toàn bộ tập match (phá vỡ phân trang/hiệu năng). Chấp nhận
+`total` hơi cao hơn số kết quả `partner` thực sự thấy được — không phải rò rỉ thông tin
+nội dung (chỉ lệch con số đếm), nhưng cần ghi trong tài liệu bàn giao đối tác sau này.
+
+### `library_stats` KHÔNG lọc theo `allowed_levels`
+Khác `search_library` (lọc per-item qua REST), `stats` chỉ đọc facet count tổng hợp từ
+Solr — không có danh sách item để hậu kiểm từng cái. Lọc đúng cần biết ánh xạ
+access_level ↔ DSpace group id thật để thêm `fq=read:...`, thứ chưa xác định (xem mục
+`ANONYMOUS_GROUP_ID` bên dưới). Để trống lọc ở Sprint 2, xử lý đầy đủ ở Sprint 4 cùng lúc
+với bảng `api_keys` — nhất quán với các method Sprint 1 khác (mặc định không lọc khi
+`allowed_levels=None`).
+
 ### `ANONYMOUS_GROUP_ID = 0` là giả định, đặt hằng số riêng dễ sửa
 Group Anonymous trong DSpace theo tài liệu cộng đồng thường có id well-known `0`, nhưng
 **chưa xác minh trên instance HPU thật** (Sprint 0 chưa chạy được — xem PLAN.md). Đặt
