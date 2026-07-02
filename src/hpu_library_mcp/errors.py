@@ -59,6 +59,34 @@ class SolrBadRequestError(UpstreamError):
     code = "UPSTREAM_ERROR"
 
 
+class EmbeddingError(UpstreamError):
+    """Lỗi khi gọi API embedding (Gemini) — không log request/response chứa API key."""
+
+    def __init__(self, message: str = "Không thể xử lý tìm kiếm ngữ nghĩa lúc này.") -> None:
+        super().__init__(message)
+
+
+class RateLimitedError(McpToolError):
+    code = "RATE_LIMITED"
+
+    def __init__(self) -> None:
+        super().__init__("Vượt giới hạn số lượt gọi cho phép, vui lòng thử lại sau.")
+
+
+class UnsupportedFormatError(McpToolError):
+    code = "UNSUPPORTED_FORMAT"
+
+    def __init__(self, mime: str) -> None:
+        super().__init__(f"Định dạng '{mime}' chưa hỗ trợ bóc nội dung.")
+
+
+class ExtractionError(McpToolError):
+    code = "EXTRACT_FAILED"
+
+    def __init__(self) -> None:
+        super().__init__("Không bóc được nội dung tệp (tệp có thể hỏng hoặc mã hóa).")
+
+
 class NotImplementedYetError(McpToolError):
     code = "NOT_IMPLEMENTED"
 

@@ -29,7 +29,19 @@ class DSpaceRestClient:
         await self._http.aclose()
 
     async def get_json(self, path: str, *, params: dict[str, Any] | None = None) -> Any:
-        return await self._request("GET", path, params=params)
+        response = await self._request("GET", path, params=params)
+        if not response.content:
+            return None
+        try:
+            return response.json()
+        except ValueError as exc:
+            logger.warning("dspace_response_not_json path=%s", path)
+            raise UpstreamError() from exc
+
+    async def get_bytes(self, path: str, *, params: dict[str, Any] | None = None) -> bytes:
+        """Tải nội dung thô (bitstream/PDF) — dùng cho bóc text Tầng 2 (Sprint 4)."""
+        response = await self._request("GET", path, params=params)
+        return response.content
 
     async def _request(
         self,
@@ -38,7 +50,7 @@ class DSpaceRestClient:
         *,
         params: dict[str, Any] | None = None,
         _retry_on_auth: bool = True,
-    ) -> Any:
+    ) -> httpx.Response:
         headers = await self.auth.auth_headers()
         try:
             response = await self._http.request(method, path, params=params, headers=headers)
@@ -60,10 +72,4 @@ class DSpaceRestClient:
             logger.warning("dspace_request_failed path=%s status=%s", path, response.status_code)
             raise UpstreamError()
 
-        if not response.content:
-            return None
-        try:
-            return response.json()
-        except ValueError as exc:
-            logger.warning("dspace_response_not_json path=%s", path)
-            raise UpstreamError() from exc
+        return response

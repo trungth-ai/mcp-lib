@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     dspace_solr_field_year: str = "dc.date.issued_year"
     dspace_solr_field_type: str = "dc.type_filter"
     dspace_solr_field_author: str = "dc.contributor.author_filter"
+    # Field lưu quyền đọc trong Solr (multi-valued, token "g<groupId>"/"e<epersonId>") —
+    # cơ chế lõi của DSpace SolrServiceImpl, ổn định hơn field metadata (xem DECISIONS.md).
+    # Dùng để lọc library_stats cho key partner (không có REST hậu kiểm từng item như
+    # search_library vì stats là facet count, không phải danh sách item).
+    dspace_solr_field_read: str = "read"
+    dspace_solr_anonymous_read_token: str = "g0"
     dspace_public_base_url: str = "https://lib.hpu.edu.vn"
 
     dspace_service_email: str = ""
@@ -40,6 +46,25 @@ class Settings(BaseSettings):
     # --- Vector layer (Sprint 3) ---
     database_url: str = ""
     gemini_api_key: SecretStr = SecretStr("")
+    gemini_embedding_model: str = "gemini-embedding-001"
+    gemini_embedding_dimensions: int = 1536
+    gemini_embedding_batch_size: int = 20
+    gemini_http_timeout_seconds: float = 30.0
+    chunk_size_chars: int = 1500
+    chunk_overlap_chars: int = 200
+
+    # --- Bóc text Tầng 2 (Sprint 4) ---
+    text_extract_max_pages: int = 50
+
+    # --- Auth / phân quyền theo API key (Sprint 4, 05-security.md) ---
+    # Quy tắc CỐ ĐỊNH, không có cờ bật/tắt (xem docs/DECISIONS.md Sprint 4):
+    #   - stdio  : 1 tiến trình phục vụ đúng 1 client cục bộ -> luôn coi là "internal".
+    #   - streamable-http : LUÔN bắt buộc key hợp lệ qua header Authorization: Bearer.
+    # Key tĩnh dùng khi CHƯA có DATABASE_URL/bảng api_keys thật (dev/demo streamable-http
+    # khi chưa cắm Postgres) — rỗng thì mọi request http có kèm key đều bị từ chối.
+    dev_static_api_key: SecretStr = SecretStr("")
+    dev_static_api_key_scope: Literal["internal", "partner"] = "partner"
+    rate_limit_default_per_minute: int = 60
 
     # --- MCP server ---
     mcp_transport: Literal["stdio", "streamable-http"] = "stdio"

@@ -66,6 +66,11 @@ _request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_i
 _key_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("key_id", default="-")
 _scope_var: contextvars.ContextVar[str] = contextvars.ContextVar("scope", default="-")
 _tool_var: contextvars.ContextVar[str] = contextvars.ContextVar("tool", default="-")
+# None = chưa nối auth (Sprint 1-3, không lọc) — KHÁC () rỗng (đã nối auth nhưng key
+# không được phép thấy mức nào, vd scope lạ). Không nhầm 2 trạng thái này.
+_allowed_levels_var: contextvars.ContextVar[tuple[str, ...] | None] = contextvars.ContextVar(
+    "allowed_levels", default=None
+)
 
 
 class ContextFilter(logging.Filter):
@@ -97,11 +102,34 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
-@contextmanager
-def tool_call_context(tool: str, key_id: str = "-", scope: str = "-"):
-    """Gắn request-id/key-id/scope/tool vào mọi log trong 1 lần gọi tool, đo latency.
+def current_key_id() -> str:
+    """key-id của request hiện tại (đặt bởi tool_call_context) — dùng cho audit log."""
+    return _key_id_var.get()
 
-    Dùng bao quanh mỗi tool trong server.py — xem NFR-6 (quan trắc).
+
+def current_scope() -> str:
+    return _scope_var.get()
+
+
+def current_request_id() -> str:
+    return _request_id_var.get()
+
+
+def current_allowed_levels() -> tuple[str, ...] | None:
+    """allowed_levels đã resolve cho request hiện tại (đặt bởi tool_call_context).
+
+    None = chưa nối auth (không lọc); tuple rỗng = đã nối auth nhưng key không có quyền
+    thấy mức nào — provider phải phân biệt 2 trường hợp này (xem base.py).
+    """
+    return _allowed_levels_var.get()
+
+
+@contextmanager
+def tool_call_context(
+    tool: str, key_id: str = "-", scope: str = "-", allowed_levels: tuple[str, ...] | None = None
+):
+    """Gắn request-id/key-id/scope/allowed_levels/tool vào mọi log + provider call trong
+    1 lần gọi tool, đo latency. Dùng bao quanh mỗi tool trong server.py — xem NFR-6.
     """
     request_id = uuid.uuid4().hex[:12]
     tokens = (
@@ -109,6 +137,7 @@ def tool_call_context(tool: str, key_id: str = "-", scope: str = "-"):
         _key_id_var.set(key_id),
         _scope_var.set(scope),
         _tool_var.set(tool),
+        _allowed_levels_var.set(allowed_levels),
     )
     logger = get_logger("hpu_library_mcp.tool")
     started_at = time.monotonic()
@@ -121,5 +150,7 @@ def tool_call_context(tool: str, key_id: str = "-", scope: str = "-"):
     finally:
         latency_ms = (time.monotonic() - started_at) * 1000
         logger.info("tool_call_end latency_ms=%.1f", latency_ms)
-        for var, token in zip((_request_id_var, _key_id_var, _scope_var, _tool_var), tokens):
+        for var, token in zip(
+            (_request_id_var, _key_id_var, _scope_var, _tool_var, _allowed_levels_var), tokens
+        ):
             var.reset(token)

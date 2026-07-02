@@ -3,8 +3,9 @@
 Sprint 1: get, list_communities, list_collections, get_recent_items, get_bitstream_link,
 health. Sprint 2: search, stats — thiết kế lai (hybrid): Solr lo tìm/lọc/rank/highlight,
 REST (đã có từ Sprint 1) lo metadata chuẩn + access_level chính xác cho từng kết quả —
-xem docs/DECISIONS.md lý do không tin hoàn toàn vào field metadata của Solr.
-semantic_search, get_text thuộc Sprint 3-4, tạm raise NotImplementedYetError.
+xem docs/DECISIONS.md lý do không tin hoàn toàn vào field metadata của Solr. Sprint 3:
+semantic_search (embed + pgvector). Sprint 4: get_text (bóc PDF, Tầng 2) — self.get() luôn
+chạy trước để enforce quyền + ghi audit trước khi bóc/trả bất kỳ nội dung nào.
 """
 
 from __future__ import annotations
@@ -13,20 +14,16 @@ import asyncio
 from typing import Any
 
 from hpu_library_mcp.config import Settings
-from hpu_library_mcp.errors import (
-    ForbiddenError,
-    NotFoundError,
-    NotImplementedYetError,
-    SolrBadRequestError,
-    UpstreamError,
-)
+from hpu_library_mcp.errors import ForbiddenError, NotFoundError, SolrBadRequestError, UpstreamError
 from hpu_library_mcp.logging_setup import get_logger
 from hpu_library_mcp.models import (
+    ALL_ACCESS_LEVELS,
     AccessLevel,
     BitstreamLink,
     Chunk,
     Citation,
     DocumentText,
+    DocumentTextPage,
     Health,
     Node,
     Resource,
@@ -52,6 +49,10 @@ from hpu_library_mcp.providers.dspace.solr_search import (
     parse_search_response,
     strip_highlighting_params,
 )
+from hpu_library_mcp.security.audit import audit_access
+from hpu_library_mcp.text.extraction import extract_pages, find_matches
+from hpu_library_mcp.vector.embedding import EmbeddingProvider
+from hpu_library_mcp.vector.store import VectorStore
 
 logger = get_logger(__name__)
 
@@ -69,6 +70,8 @@ class DSpaceProvider(ResourceProvider):
         settings: Settings,
         client: DSpaceRestClient | None = None,
         solr_client: SolrClient | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
+        vector_store: VectorStore | None = None,
     ) -> None:
         self._settings = settings
         self._client = client or DSpaceRestClient(
@@ -82,6 +85,10 @@ class DSpaceProvider(ResourceProvider):
             core=settings.dspace_solr_search_core,
             timeout=settings.dspace_http_timeout_seconds,
         )
+        # Không tự dựng mặc định (cần GEMINI_API_KEY/DATABASE_URL thật) — server.py tự
+        # quyết định có cắm hay không; thiếu thì semantic_search báo lỗi rõ ràng khi gọi.
+        self._embedding_provider = embedding_provider
+        self._vector_store = vector_store
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -108,9 +115,10 @@ class DSpaceProvider(ResourceProvider):
     def _enforce_access(
         access_level: AccessLevel, allowed_levels: tuple[AccessLevel, ...] | None, *, item_id: str
     ) -> None:
-        if allowed_levels is None:
-            return  # Sprint 1: chưa có tầng auth/API key -> không lọc (xem base.py)
-        if access_level not in allowed_levels:
+        # allowed_levels=None: Sprint 1-3 chưa nối tầng auth/API key -> không lọc (base.py).
+        granted = allowed_levels is None or access_level in allowed_levels
+        audit_access(item_id=item_id, access_level=access_level, granted=granted)
+        if not granted:
             logger.warning("access_denied item_id=%s access_level=%s", item_id, access_level)
             raise ForbiddenError()
 
@@ -164,8 +172,11 @@ class DSpaceProvider(ResourceProvider):
         for raw_item in raw_items_sorted:
             policies = await self._get_item_policies(raw_item.get("uuid"))
             resource = self._map_item(raw_item, policies)
-            if allowed_levels is None or resource.access_level in allowed_levels:
-                resources.append(resource)
+            try:
+                self._enforce_access(resource.access_level, allowed_levels, item_id=resource.id)
+            except ForbiddenError:
+                continue  # ẩn khỏi danh sách thay vì lỗi cả trang (06-test-plan §2.4)
+            resources.append(resource)
         return resources
 
     async def get_bitstream_link(
@@ -291,6 +302,8 @@ class DSpaceProvider(ResourceProvider):
             total=total, page=page, page_size=page_size, results=results, facets=facets_out, citations=citations
         )
 
+    # --- Sprint 3 ---
+
     async def semantic_search(
         self,
         query: str,
@@ -299,7 +312,20 @@ class DSpaceProvider(ResourceProvider):
         filters: dict[str, Any] | None = None,
         allowed_levels: tuple[AccessLevel, ...] | None = None,
     ) -> list[Chunk]:
-        raise NotImplementedYetError("semantic_search_documents", "Sprint 3")
+        # `filters` (collection/year_from/type) CHƯA được áp dụng — SQL semantic hiện bám
+        # đúng nguyên văn 04-data-model.md §2 (chỉ lọc access_level). Xem docs/DECISIONS.md
+        # Sprint 3 lý do chưa mở rộng lọc theo meta JSONB.
+        if self._embedding_provider is None or self._vector_store is None:
+            raise UpstreamError(
+                "Tìm kiếm ngữ nghĩa chưa được cấu hình (thiếu GEMINI_API_KEY hoặc DATABASE_URL)."
+            )
+        levels = allowed_levels if allowed_levels else ALL_ACCESS_LEVELS
+        [query_embedding] = await self._embedding_provider.embed([query], task_type="query")
+        return await self._vector_store.semantic_search(
+            embedding=query_embedding, source=self.source, allowed_levels=levels, k=k
+        )
+
+    # --- Sprint 4 ---
 
     async def get_text(
         self,
@@ -309,13 +335,46 @@ class DSpaceProvider(ResourceProvider):
         page: int | None = None,
         allowed_levels: tuple[AccessLevel, ...] | None = None,
     ) -> DocumentText:
-        raise NotImplementedYetError("get_document_text/find_in_document", "Sprint 4")
+        # self.get() enforce quyền + ghi audit trước (05-security.md §6) — KHÔNG bóc/trả
+        # nội dung nếu không đủ quyền, dù có bóc được hay không.
+        resource = await self.get(id, allowed_levels=allowed_levels)
+
+        pdf_files = [f for f in resource.files if f.mime == "application/pdf"]
+        if not pdf_files:
+            raise NotFoundError("Tài liệu này không có tệp PDF để bóc nội dung.")
+        target = pdf_files[0]
+
+        content = await self._client.get_bytes(target.bitstream_link)
+        max_pages = self._settings.text_extract_max_pages
+        pages_text, truncated = await asyncio.to_thread(
+            extract_pages, content, mime=target.mime, max_pages=max_pages
+        )
+
+        result_pages: list[DocumentTextPage] = []
+        if page is not None:
+            index = page - 1
+            if 0 <= index < len(pages_text):
+                text = pages_text[index]
+                matches = find_matches(text, query) if query else []
+                result_pages.append(DocumentTextPage(page=page, text=text, matches=matches))
+        else:
+            for idx, text in enumerate(pages_text, start=1):
+                matches = find_matches(text, query) if query else []
+                if query and not matches:
+                    continue  # find_in_document: chỉ trả trang có khớp
+                result_pages.append(DocumentTextPage(page=idx, text=text, matches=matches))
+
+        return DocumentText(
+            id=resource.id, pages=result_pages, truncated=truncated, access_level=resource.access_level
+        )
 
     async def stats(
         self, *, group_by: list[str] | None = None, allowed_levels: tuple[AccessLevel, ...] | None = None
     ) -> Stats:
-        # allowed_levels chưa được lọc ở đây — lọc thống kê theo scope key thuộc Sprint 4
-        # (cần bảng api_keys + mapping access_level -> DSpace group id thật, chưa có).
+        # Không có REST hậu kiểm từng item như search_library (stats là facet COUNT, không
+        # phải danh sách) -> lọc thẳng ở Solr qua field `read` khi key chỉ được thấy public
+        # (06-test-plan.md §2.4 yêu cầu partner không thấy số liệu internal/restricted).
+        # allowed_levels=None (chưa nối auth) hoặc thấy > public: không lọc thêm.
         settings = self._settings
         group_by = group_by or ["type", "year"]
         field_map = {
@@ -333,6 +392,9 @@ class DSpaceProvider(ResourceProvider):
             ("fq", f"{settings.dspace_solr_field_resourcetype}:{settings.dspace_solr_resourcetype_item}"),
             ("facet", "true"),
         ]
+        if allowed_levels is not None and set(allowed_levels) == {"public"}:
+            params.append(("fq", f"{settings.dspace_solr_field_read}:{settings.dspace_solr_anonymous_read_token}"))
+
         requested: list[tuple[str, str]] = []
         for name in group_by:
             field = field_map.get(name)

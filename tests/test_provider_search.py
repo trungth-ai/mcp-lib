@@ -123,3 +123,19 @@ async def test_stats_returns_totals_and_facets_by_logical_name():
     assert stats.by["year"] == {"2023": 12, "2022": 8}
     sent_params = solr_params_dict(solr.calls[0])
     assert sent_params["rows"] == [0]
+
+
+async def test_stats_no_extra_filter_for_internal_scope():
+    raw = {"response": {"numFound": 1}, "facet_counts": {"facet_fields": {}}}
+    provider, _, solr = make_provider(rest_routes={}, solr_responses=raw)
+    await provider.stats(allowed_levels=("public", "internal", "restricted"))
+    sent_params = solr_params_dict(solr.calls[0])
+    assert not any("read:" in fq for fq in sent_params.get("fq", []))
+
+
+async def test_stats_filters_by_read_anonymous_token_for_partner_scope():
+    raw = {"response": {"numFound": 1}, "facet_counts": {"facet_fields": {}}}
+    provider, _, solr = make_provider(rest_routes={}, solr_responses=raw)
+    await provider.stats(allowed_levels=("public",))
+    sent_params = solr_params_dict(solr.calls[0])
+    assert any(fq == "read:g0" for fq in sent_params.get("fq", []))

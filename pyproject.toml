@@ -9,6 +9,8 @@ dependencies = [
     "httpx>=0.27",
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
+    "asyncpg>=0.29",
+    "pdfplumber>=0.11",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +22,7 @@ dev = [
 
 [project.scripts]
 hpu-library-mcp = "hpu_library_mcp.server:main"
+hpu-library-mcp-sync = "hpu_library_mcp.ingest:main"
 
 [build-system]
 requires = ["setuptools>=68"]
