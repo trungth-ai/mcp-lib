@@ -6,6 +6,33 @@ khi kết thúc một phiên code đáng kể.
 
 ## Trạng thái: Sprint 5 + rà soát lỗ hổng xong (2026-07-03) — GĐ1 code xong hết cả 6 sprint
 
+### Deploy thật lần đầu (2026-07-03) — đang chặn ở tầng mạng, không phải code
+
+Anh Trung deploy thử lên host thật (ubuntu210, chạy Docker), gặp 2 vấn đề:
+
+1. **Crash loop `MCP_TRANSPORT=stdio` trong container** — đã sửa (xem mục "Fix" bên
+   dưới, commit `c29db40`): ép cứng `streamable-http` trong `docker-compose.yml`.
+2. **Không kết nối được DSpace REST từ host MCP tới host DSpace** — đã xác nhận:
+   - Cổng REST thật là **8081**, không phải 8088 (giả định cũ, đã sửa `config.py`/
+     `.env.example`/`CLAUDE.md`). Xác nhận qua browser mở được
+     `http://localhost:8081/rest` **trên chính host DSpace (10.1.0.205)**.
+   - Từ host MCP (`ubuntu210`) gọi `curl -m 3 http://10.1.0.205:8081/solr` → **timeout**
+     (không phải "connection refused") — dấu hiệu firewall/network DROP giữa 2 host,
+     không phải DSpace service chết hay code sai.
+   - `ufw status` trên `ubuntu210` (phía client/MCP) là `inactive` → chặn không phải ở
+     phía này.
+   - **Nghi vấn chính**: Windows Firewall trên host DSpace (`10.1.0.205` — theo
+     README.md, host này chạy Windows) chỉ cho phép `127.0.0.1`, chặn inbound từ IP LAN
+     khác trên cổng 8081. Anh Trung đang tự kiểm tra trực tiếp trên host đó (có mở sẵn
+     `traefik.toml`, `rules.toml`, `dspace.cfg` qua Notepad++ — có vẻ Traefik là lớp
+     trước DSpace, có thể route hiện tại chỉ cho phép qua Traefik chứ không mở thẳng LAN).
+   - **Cổng Solr thật vẫn CHƯA xác nhận** — mới chỉ giả định dùng chung cổng REST
+     (8081), cần kiểm riêng (curl trực tiếp từ host DSpace vào chính nó trước, như đã
+     làm với `/rest`, để loại trừ vấn đề mạng khỏi câu hỏi "cổng nào").
+
+**Việc này KHÔNG sửa được bằng code** — cần anh Trung/quản trị mạng HPU xử lý ở tầng hạ
+tầng (Windows Firewall, hoặc rule Traefik nếu ý định là mọi truy cập phải qua Traefik).
+
 ### Rà soát lỗ hổng (sau Sprint 5, 2026-07-03)
 Soát lại toàn bộ 01/03/06 so với code thật, phát hiện + sửa 4 lỗ hổng:
 

@@ -20,8 +20,11 @@ class Settings(BaseSettings):
 
     # --- DSpace ---
     dspace_version: Literal["6.3", "v10"] = "6.3"
-    dspace_rest_base_url: str = "http://10.1.0.205:8088/rest"
-    dspace_solr_base_url: str = "http://10.1.0.205:8088/solr"
+    # Cổng REST xác nhận thật 2026-07-03 (anh Trung kiểm tra trực tiếp trên host DSpace,
+    # xem docs/DECISIONS.md) — 8088 trước đây chỉ là GIẢ ĐỊNH sai. Cổng Solr CHƯA xác
+    # minh (dùng chung port REST chỉ là phỏng đoán, cần kiểm riêng — xem PLAN.md).
+    dspace_rest_base_url: str = "http://10.1.0.205:8081/rest"
+    dspace_solr_base_url: str = "http://10.1.0.205:8081/solr"
     # Tên core/field dưới đây là GIẢ ĐỊNH — xác minh ở Sprint 0 (xem 07-sprints.md).
     # Cố tình để cấu hình được thay vì hardcode trong code. Field cấu trúc lõi của
     # DSpace (search.resourcetype, handle) ổn định hơn field metadata (title/author/...)

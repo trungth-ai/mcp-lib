@@ -7,7 +7,7 @@ from hpu_library_mcp.errors import ForbiddenError, NotFoundError
 from hpu_library_mcp.providers.dspace.provider import DSpaceProvider
 from tests.conftest import ANON_READ_POLICY, INTERNAL_READ_POLICY, MINIMAL_PDF_BYTES, FakeDSpaceRestClient
 
-REST_BASE = "http://10.1.0.205:8088/rest"
+REST_BASE = "http://10.1.0.205:8081/rest"
 BITSTREAM_URL = f"{REST_BASE}/bitstreams/bit-1/retrieve"
 
 

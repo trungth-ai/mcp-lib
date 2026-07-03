@@ -12,7 +12,7 @@ from tests.conftest import (
     FakeVectorStore,
 )
 
-REST_BASE = "http://10.1.0.205:8088/rest"
+REST_BASE = "http://10.1.0.205:8081/rest"
 BITSTREAM_URL = f"{REST_BASE}/bitstreams/bit-1/retrieve"
 
 

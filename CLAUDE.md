@@ -11,7 +11,8 @@ và [docs/DECISIONS.md](docs/DECISIONS.md) (quyết định implementation).**
 
 ## Tech Stack
 - Python 3.12, FastMCP (`mcp` SDK chính thức), httpx (async), Pydantic v2 + pydantic-settings.
-- Nguồn dữ liệu: DSpace 6.3 REST cũ (`/rest`) + Solr Discovery qua LAN `10.1.0.205:8088`.
+- Nguồn dữ liệu: DSpace 6.3 REST cũ (`/rest`) + Solr Discovery qua LAN `10.1.0.205:8081`
+  (cổng REST xác nhận thật 2026-07-03; cổng Solr CHƯA xác minh riêng, đang tạm dùng chung).
 - Vector layer: PostgreSQL + pgvector (`asyncpg`), embedding Gemini `gemini-embedding-001`
   (1536d, REST trực tiếp qua httpx — không dùng SDK `google-genai`).
 - Bóc text: `pdfplumber` (chỉ PDF, thuần Python, không cần Tika/Java).
