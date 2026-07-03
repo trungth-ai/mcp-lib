@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from hpu_library_mcp.config import Settings
@@ -76,3 +78,23 @@ async def test_semantic_search_returns_chunks_from_store():
     chunks = await provider.semantic_search("x")
 
     assert chunks == [chunk]
+
+
+async def test_semantic_search_audits_internal_restricted_chunks(caplog):
+    from hpu_library_mcp.models import Chunk
+
+    internal_chunk = Chunk(
+        item_id="1/1", chunk_index=0, text="nội bộ", score=0.9, access_level="internal"
+    )
+    public_chunk = Chunk(item_id="1/2", chunk_index=0, text="công khai", score=0.8, access_level="public")
+    embedding_provider = FakeEmbeddingProvider()
+    vector_store = FakeVectorStore(chunks=[internal_chunk, public_chunk])
+    provider = make_provider(embedding_provider=embedding_provider, vector_store=vector_store)
+
+    with caplog.at_level(logging.INFO, logger="hpu_library_mcp.audit"):
+        await provider.semantic_search("x", allowed_levels=("public", "internal", "restricted"))
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("1/1" in m and "internal" in m and "granted=True" in m for m in messages)
+    # chunk public không cần audit (05-security.md §6: chỉ audit internal/restricted)
+    assert not any("1/2" in m for m in messages)

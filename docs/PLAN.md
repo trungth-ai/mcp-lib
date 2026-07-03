@@ -4,7 +4,37 @@ Kế hoạch đầy đủ theo sprint: xem [../07-sprints.md](../07-sprints.md).
 File này chỉ theo dõi **trạng thái sống** (sprint nào xong, đang làm gì) — cập nhật mỗi
 khi kết thúc một phiên code đáng kể.
 
-## Trạng thái: Sprint 5 xong (2026-07-03) — GĐ1 code xong hết cả 6 sprint, chờ Sprint 0 thật
+## Trạng thái: Sprint 5 + rà soát lỗ hổng xong (2026-07-03) — GĐ1 code xong hết cả 6 sprint
+
+### Rà soát lỗ hổng (sau Sprint 5, 2026-07-03)
+Soát lại toàn bộ 01/03/06 so với code thật, phát hiện + sửa 4 lỗ hổng:
+
+1. **Tách `DSpaceAdapter`** (`adapter_base.py` + `adapter_v6.py`) khỏi `DSpaceProvider` —
+   trước đây `DSpaceProvider` chứa thẳng logic REST 6.3/Solr, `Settings.dspace_version`
+   tồn tại nhưng KHÔNG ĐƯỢC DÙNG (config chết) → vi phạm NFR-4 ("chuyển 6.3→v10 chỉ đổi
+   config adapter, không sửa tool"). Giờ `DSpaceProvider` chỉ còn business logic
+   (enforce/audit/orchestrate), gọi qua interface `DSpaceAdapter`; `dspace_version=v10`
+   giờ báo lỗi rõ ràng (`NotImplementedYetError`) thay vì âm thầm dùng nhầm adapter 6.3.
+   195/195 test cũ (trước refactor: 181) vẫn xanh KHÔNG SỬA GÌ trong test — xác nhận hành
+   vi không đổi, chỉ tái cấu trúc.
+2. **`semantic_search_documents` giờ ghi audit** cho chunk `internal`/`restricted` trả
+   về (trước đây chỉ lọc bằng SQL, không audit — thiếu so với 05-security.md §6).
+3. **Test "MCP contract"** (06-test-plan §2.2, `tests/test_mcp_contract.py`): xác nhận tự
+   động đúng 10 tool + schema khớp 03-tools-spec.md + `ctx` không lộ ra client + app
+   streamable-http dựng được và `/health` gọi được không cần key.
+4. **Test rate limit qua đúng đường `server.py`** (06-test-plan §2.5,
+   `tests/test_rate_limit_integration.py`) + **test hiệu năng dạng proxy** (NFR-3,
+   `tests/test_performance_bounds.py`: chặn trên số lượt REST/Solr, và đo trực tiếp
+   `search()` chạy SONG SONG không tuần tự bằng độ trễ giả lập — phát hiện được nếu ai
+   đó lỡ đổi `asyncio.gather` thành vòng lặp `await`).
+
+Còn 3 điểm nhỏ **CHƯA sửa** (cần xác nhận ý định trước khi đổi API, không tự ý đổi):
+- `citations` chỉ có ở `search_library`/`semantic_search_documents`, không có ở 8 tool
+  còn lại (03-tools-spec.md nói "mọi output kèm citations" nhưng ví dụ JSON cụ thể chỉ
+  2 tool có).
+- `get_recent_items` trả `{"items":[...]}` với `Resource` đầy đủ, spec nói "danh sách
+  Resource **rút gọn**" (có thể ý là mảng trần + ít field hơn).
+- `library_stats` mặc định `group_by=["type","year"]`, spec ví dụ có thêm `"collection"`.
 
 ### Đã xong
 

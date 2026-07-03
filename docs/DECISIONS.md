@@ -203,3 +203,36 @@ Caddy (chạy trên host, ngoài Compose) mới là cổng ra Internet duy nhấ
 05-security.md §7 "bề mặt public duy nhất là endpoint MCP qua Caddy". Container `mcp`
 không cần biết gì về TLS/domain — tách trách nhiệm rõ ràng, đổi domain/chứng chỉ không
 cần rebuild image.
+
+## 2026-07-03 — Rà soát lỗ hổng sau Sprint 5
+
+### Tách `DSpaceAdapter`/`DSpace6Adapter` — nợ kiến trúc từ Sprint 1-2, phát hiện khi tự rà soát lại
+Sprint 1-2 code thẳng logic REST 6.3/Solr vào `DSpaceProvider` cho nhanh, coi nhẹ phần
+"ủy quyền cho adapter" của 02-architecture.md §4.2 vì Sprint 1-4 chỉ có 1 phiên bản
+(6.3) để nghĩ tới. Hậu quả: `Settings.dspace_version` khai báo nhưng không đọc ở đâu —
+vi phạm thẳng NFR-4. Sửa bằng cách tách interface `DSpaceAdapter` (trả object đã chuẩn
+hóa: `Resource`/`Node`/`ResourceFile`, không rò rỉ hình dạng JSON REST/Solr) +
+`DSpace6Adapter` (toàn bộ chi tiết cụ thể), `DSpaceProvider` chỉ còn enforce/audit/
+orchestrate. Chọn adapter theo `dspace_version` trong `_build_default_adapter()`;
+`v10` raise `NotImplementedYetError` rõ ràng thay vì im lặng dùng nhầm 6.3.
+**Cách xác nhận không phá hành vi**: KHÔNG sửa 1 dòng nào trong file test cũ, chỉ chạy
+lại — 181/181 xanh nguyên trước khi thêm test mới. Nếu phải sửa test cũ để nó pass thì
+tức là đã đổi hành vi ngoài ý muốn, phải dừng lại xem xét — may mắn không rơi vào
+trường hợp đó.
+
+### `semantic_search()` tự ghi audit cho từng chunk trả về, không dựa vào SQL WHERE để "coi như đã an toàn nên khỏi audit"
+Phát hiện khi so lại 05-security.md §6 ("audit MỌI lần truy cập tài liệu internal/
+restricted") — trước đó chỉ `search()`/`get()`/`get_bitstream_link()`/`get_text()` gọi
+`audit_access` (qua `_enforce_access`), còn `semantic_search()` dựa hoàn toàn vào
+`WHERE access_level = ANY($3)` ở pgvector để lọc, không hề gọi `audit_access`. Về mặt an
+toàn dữ liệu điều đó ĐÚNG (không rò rỉ), nhưng về mặt audit-trail thì THIẾU — key
+internal đọc tài liệu restricted qua semantic search sẽ không để lại dấu vết audit như
+khi đọc qua `get_document_text`. Thêm vòng lặp gọi `audit_access(granted=True)` cho từng
+chunk non-public sau khi VectorStore trả kết quả (granted luôn True ở đây vì SQL đã lọc
+trước, không có trường hợp "denied" tới được điểm này).
+
+### 3 lỗ hổng nhỏ (citations/get_recent_items envelope/stats default) CỐ TÌNH chưa sửa
+Khác 2 mục trên (bug rõ ràng, sửa không đổi hợp đồng API), 3 điểm này đụng tới HÌNH DẠNG
+OUTPUT mà client thật (RAG chatbot, agent tuyển sinh) có thể đã/sẽ dựa vào — tự ý đổi
+schema không hỏi trước rủi ro phá client đang dùng hơn là để nguyên. Ghi trong
+docs/PLAN.md, chờ anh Trung xác nhận ý định trước khi đổi.

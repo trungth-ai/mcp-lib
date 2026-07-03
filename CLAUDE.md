@@ -58,8 +58,12 @@ src/hpu_library_mcp/
 │       ├── mapping.py       — DC -> Resource, suy diễn access_level (05-security.md §4)
 │       ├── solr_client.py   — HTTP client mỏng Solr (select), 400 vs 5xx/timeout riêng biệt
 │       ├── solr_search.py   — xây query Solr + diễn giải response (facet, highlight)
-│       └── provider.py      — DSpaceProvider: search (Solr+REST hybrid), semantic_search
-│                               (embed+pgvector), get_text (Tầng 2, PDF), stats, ...
+│       ├── adapter_base.py  — interface DSpaceAdapter (02-architecture.md §4.2, NFR-4:
+│       │                       đổi 6.3->v10 = viết adapter mới, KHÔNG sửa provider.py)
+│       ├── adapter_v6.py    — DSpace6Adapter: toàn bộ chi tiết REST 6.3/Solr cụ thể
+│       └── provider.py      — DSpaceProvider: CHỈ business logic dùng chung (enforce
+│                               quyền, audit, orchestrate search/semantic/get_text),
+│                               gọi qua self._adapter, không biết REST/Solr là gì
 ├── vector/
 │   ├── embedding.py         — interface EmbeddingProvider
 │   ├── gemini_embedding.py  — GeminiEmbeddingProvider (REST Gemini, đã verify hình dạng API)
