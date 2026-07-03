@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Docker secret (Sprint 5, 05-security.md §5): file /run/secrets/<field_name> đè lên field
+# cùng tên nếu thư mục tồn tại (chuẩn Docker Swarm/Compose). Chỉ bật khi thư mục thật sự
+# có — tránh warning "directory does not exist" khi chạy local/test (không phải Docker).
+_SECRETS_DIR = "/run/secrets" if os.path.isdir("/run/secrets") else None
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", secrets_dir=_SECRETS_DIR
+    )
 
     # --- DSpace ---
     dspace_version: Literal["6.3", "v10"] = "6.3"

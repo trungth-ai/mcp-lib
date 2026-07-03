@@ -23,6 +23,7 @@ dev = [
 [project.scripts]
 hpu-library-mcp = "hpu_library_mcp.server:main"
 hpu-library-mcp-sync = "hpu_library_mcp.ingest:main"
+hpu-library-mcp-keys = "hpu_library_mcp.admin_keys:main"
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -16,7 +16,9 @@ và [docs/DECISIONS.md](docs/DECISIONS.md) (quyết định implementation).**
   (1536d, REST trực tiếp qua httpx — không dùng SDK `google-genai`).
 - Bóc text: `pdfplumber` (chỉ PDF, thuần Python, không cần Tika/Java).
 - Transport: `stdio` (dev, Claude Code/Desktop — coi là client nội bộ tin cậy) và
-  `streamable-http` (prod, sau Caddy — LUÔN bắt buộc API key) — đóng gói thật ở Sprint 5.
+  `streamable-http` (prod, sau Caddy — LUÔN bắt buộc API key).
+- Đóng gói: Docker (`Dockerfile` + `docker-compose.yml`, Postgres qua image
+  `pgvector/pgvector:pg16`) + Caddy (`Caddyfile`, TLS tự động) — xem [docs/DEPLOY.md](docs/DEPLOY.md).
 - Test: pytest + pytest-asyncio + respx (mock HTTP) + fake pool/context tự viết trong
   `tests/conftest.py` (không cần Postgres/Docker thật để chạy unit test).
 
@@ -28,17 +30,21 @@ source .venv/Scripts/activate    # git bash
 
 pip install -e ".[dev]"          # cài project + dev deps
 python -m pytest -q              # chạy toàn bộ test
-python -m hpu_library_mcp.server # chạy MCP server (mặc định stdio, xem .env)
-python -m hpu_library_mcp.ingest # chạy đồng bộ embedding (cần GEMINI_API_KEY + DATABASE_URL)
+python -m hpu_library_mcp.server     # chạy MCP server (mặc định stdio, xem .env)
+python -m hpu_library_mcp.ingest     # chạy đồng bộ embedding (cần GEMINI_API_KEY + DATABASE_URL)
+python -m hpu_library_mcp.admin_keys # quản lý api_keys (create/list/revoke, cần DATABASE_URL)
+
+docker compose build && docker compose up -d   # đóng gói thật (xem docs/DEPLOY.md)
 ```
 Copy `.env.example` → `.env` trước khi chạy server thật (không commit `.env`).
 
 ## Architecture
 ```
 src/hpu_library_mcp/
-├── server.py              — FastMCP app, đăng ký tool (10 tool), auth wiring, composition root
+├── server.py              — FastMCP app, đăng ký tool (10 tool) + /health, auth wiring
 ├── ingest.py                — pipeline đồng bộ embedding (script vận hành, không phải MCP tool)
-├── db.py                     — Database dùng chung (asyncpg pool + ensure_schema)
+├── admin_keys.py             — CLI quản lý api_keys (script vận hành, không phải MCP tool)
+├── db.py                      — Database dùng chung (asyncpg pool + ensure_schema)
 ├── config.py                  — Settings (pydantic-settings, đọc .env)
 ├── logging_setup.py           — log có redaction + request-id/key-id/scope/allowed_levels (contextvar)
 ├── errors.py                   — McpToolError hierarchy -> {"error":{"code","message"}}
@@ -107,6 +113,11 @@ src/hpu_library_mcp/
   `FakeContext` (duck-type `ctx.request_context.request.headers`) — không dựng
   `mcp.server.fastmcp.Context` thật (phụ thuộc session/transport nội bộ SDK, dễ vỡ khi
   đổi version).
+- **Máy này không có Docker** — `Dockerfile`/`docker-compose.yml`/`Caddyfile` viết đúng
+  chuẩn nhưng CHƯA build/run thử thật. Nên test ở staging trước khi trỏ domain thật.
+- pydantic-settings ưu tiên biến môi trường/`.env` HƠN Docker secret — nếu `.env` có
+  dòng rỗng cho field bí mật (`GEMINI_API_KEY=`...), nó đè mất secret thật. Khi dùng
+  Docker secrets, xóa hẳn các dòng đó khỏi `.env` (xem docs/DEPLOY.md mục 1).
 
 ## Shared Resources (quy ước chung mọi project HPU)
 - API conventions: `~/hpu-dev/_shared/api-conventions.md` — **lưu ý**: envelope REST đó

@@ -1,0 +1,18 @@
+# Chạy trên host MCP (10.1.0.207), đứng trước container mcp (cổng 8800) — 07-sprints.md
+# Sprint 5. Caddy tự xin/renew TLS (Let's Encrypt) cho domain bên dưới, cần DNS
+# mcp-lib.hpu.edu.vn -> 27.72.202.13 đã trỏ đúng trước khi chạy.
+
+mcp-lib.hpu.edu.vn {
+	# streamable-http của FastMCP dùng chunked/streaming response — tắt buffer để không
+	# chờ đủ dữ liệu mới forward (Caddy proxy mặc định đã hỗ trợ, ghi rõ cho dễ tra cứu).
+	reverse_proxy 127.0.0.1:8800 {
+		flush_interval -1
+	}
+
+	encode gzip
+
+	log {
+		output file /var/log/caddy/mcp-lib.access.log
+		format json
+	}
+}

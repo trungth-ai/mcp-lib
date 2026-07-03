@@ -4,7 +4,7 @@ Kế hoạch đầy đủ theo sprint: xem [../07-sprints.md](../07-sprints.md).
 File này chỉ theo dõi **trạng thái sống** (sprint nào xong, đang làm gì) — cập nhật mỗi
 khi kết thúc một phiên code đáng kể.
 
-## Trạng thái: Sprint 4 xong (2026-07-02) — GĐ1 code xong hết, chờ Sprint 0 thật + Sprint 5
+## Trạng thái: Sprint 5 xong (2026-07-03) — GĐ1 code xong hết cả 6 sprint, chờ Sprint 0 thật
 
 ### Đã xong
 
@@ -57,17 +57,34 @@ kế lai (Solr tìm/lọc/rank, REST cấp metadata + access_level chính xác).
   `resolve_identity()`, truyền `allowed_levels=current_allowed_levels()` vào provider.
   `library_stats` lọc thêm ở Solr qua field `read` khi key chỉ thấy `public` (không có
   REST hậu kiểm từng item như search vì stats là facet count).
-- **173 unit test xanh** (cộng dồn cả 4 sprint), gồm bộ test bảo mật đầy đủ theo
-  06-test-plan §2.4 (`tests/test_security_matrix.py`, 17 test) chạy THẬT qua tool
-  `server.py` (không chỉ ở tầng provider): partner bị loại khỏi
-  `search_library`/`get_recent_items`/`library_stats`, bị `forbidden` ở
+- Bộ test bảo mật đầy đủ theo 06-test-plan §2.4 (`tests/test_security_matrix.py`, 17
+  test) chạy THẬT qua tool `server.py` (không chỉ ở tầng provider): partner bị loại
+  khỏi `search_library`/`get_recent_items`/`library_stats`, bị `forbidden` ở
   `get_item`/`get_bitstream_link`/`get_document_text`/`find_in_document`; internal thấy
   đủ; không có key qua streamable-http luôn bị chặn; response lỗi không lộ token.
+
+**Sprint 5 — Đóng gói & phục vụ**:
+- `Dockerfile` (multi-stage nhẹ, non-root user, `HEALTHCHECK` gọi `/health`), `.dockerignore`.
+- `docker-compose.yml`: service `mcp` + `postgres` (`pgvector/pgvector:pg16`), Docker
+  secrets cho `database_url`/`dspace_service_password`/`gemini_api_key`/`dev_static_api_key`
+  (mẫu `.example` trong `secrets/`, file thật bị gitignore).
+- `Caddyfile`: reverse proxy `mcp-lib.hpu.edu.vn` → `127.0.0.1:8800`.
+- `GET /health` (không cần API key, dùng `mcp.custom_route` — xác nhận có thật trong SDK
+  đã cài): báo trạng thái DSpace REST + đã cấu hình semantic search/key store chưa.
+- `admin_keys.py` (`python -m hpu_library_mcp.admin_keys create|list|revoke`): tạo/liệt
+  kê/khóa `api_keys` trực tiếp trên Postgres, key thô chỉ hiện 1 lần lúc tạo.
+- `docs/DEPLOY.md`: quy trình build/run/rotate key/chạy lại đồng bộ + bảng sự cố thường
+  gặp, đặc biệt lưu ý thứ tự ưu tiên `.env` > Docker secret của pydantic-settings (dễ
+  đè mất secret nếu để sót dòng rỗng trong `.env`).
+- **181 unit test xanh** (cộng dồn cả 5 sprint).
 
 ### CHƯA làm (quan trọng — đừng nhầm là đã xong)
 - **Tên field Solr** (title/author/year/type/default/fulltext/read...) vẫn là GIẢ ĐỊNH
   chưa xác minh trên instance HPU thật — đã đưa hết vào `.env`, không cần sửa code khi
   có kết quả Sprint 0 thật.
+- **Chưa build/run Docker thật** — máy dev Windows này không có Docker. Dockerfile/
+  compose/Caddyfile viết đúng theo chuẩn nhưng CHƯA build thử; nên chạy ở staging trước
+  khi trỏ domain thật.
 - **Chưa chạy được integration thật** với DSpace/Solr/Postgres/Gemini (chỉ mock/fake) —
   máy dev này không có LAN, Docker, hay `GEMINI_API_KEY` thật.
 - `library_stats` cho key `partner`: lọc qua Solr field `read` (token `g0`) — CHƯA xác
@@ -78,13 +95,16 @@ kế lai (Solr tìm/lọc/rank, REST cấp metadata + access_level chính xác).
   docs/DECISIONS.md).
 - Chưa gỡ chunk pgvector khi item bị ẩn/xóa ở DSpace (ingest chỉ upsert, chưa so sánh
   2 chiều).
-- Docker/Caddy/triển khai `api_keys` thật + rate limit đa instance — Sprint 5.
+- Rate limit chỉ đúng cho 1 instance (trong bộ nhớ) — cần Redis/Postgres nếu scale ngang
+  nhiều container `mcp` cùng lúc.
 
 ### Tiếp theo (đề xuất)
 1. Chạy nốt Sprint 0 thật trên máy có LAN — xác nhận/sửa toàn bộ field Solr trong
    `.env`, `ANONYMOUS_GROUP_ID` trong `mapping.py`.
-2. Nếu có Postgres+pgvector và `GEMINI_API_KEY` thật: chạy `hpu-library-mcp-sync` với
+2. Build + chạy thử `docker compose` ở staging (host có Docker) trước khi deploy thật
+   lên `10.1.0.207` — xem docs/DEPLOY.md.
+3. Nếu có Postgres+pgvector và `GEMINI_API_KEY` thật: chạy `hpu-library-mcp-sync` với
    vài item mẫu, xác nhận `semantic_search_documents` trả đúng + đo chi phí embedding
    (NFR-8) trước khi ingest toàn kho.
-3. Sprint 5: Dockerfile/docker-compose, Caddy `mcp-lib.hpu.edu.vn`, tạo `api_keys` thật
-   trong Postgres (thay `DEV_STATIC_API_KEY`), health/metrics.
+4. Tạo `api_keys` thật cho từng client (RAG chatbot, agent tuyển sinh, đối tác ngoài)
+   qua `admin_keys.py`, thay `DEV_STATIC_API_KEY`.

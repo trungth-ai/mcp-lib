@@ -1,0 +1,54 @@
+# Triển khai HPU Library MCP + Postgres/pgvector — xem docs/DEPLOY.md.
+# Caddy KHÔNG nằm trong compose này (chạy trên host, đứng trước cổng 8800 — xem Caddyfile).
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hpu_library_mcp
+      POSTGRES_USER: hpu_library_mcp
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hpu_library_mcp -d hpu_library_mcp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mcp:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    # CHÚ Ý: KHÔNG đặt DSPACE_SERVICE_PASSWORD/GEMINI_API_KEY/DATABASE_URL/
+    # DEV_STATIC_API_KEY trong .env khi dùng secrets — pydantic-settings ưu tiên env var
+    # hơn secrets file, đặt cả 2 sẽ khiến giá trị rỗng trong .env đè mất secret thật
+    # (xem docs/DEPLOY.md).
+    secrets:
+      - database_url
+      - dspace_service_password
+      - gemini_api_key
+      - dev_static_api_key
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8800:8800" # chỉ localhost — Caddy trên host proxy vào, không mở public trực tiếp
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  database_url:
+    file: ./secrets/database_url.txt
+  dspace_service_password:
+    file: ./secrets/dspace_service_password.txt
+  gemini_api_key:
+    file: ./secrets/gemini_api_key.txt
+  dev_static_api_key:
+    file: ./secrets/dev_static_api_key.txt
+
+volumes:
+  pgdata:

@@ -170,3 +170,36 @@ không có `query` optional (bắt buộc) vì bản chất là "tìm", còn `ge
 scale ngang nhiều replica, giới hạn per-instance không còn đúng theo key toàn cục — cần
 store dùng chung (Redis/Postgres) trước khi scale, KHÔNG âm thầm coi giới hạn hiện tại là
 đủ cho production nhiều replica.
+
+## 2026-07-03 — Sprint 5
+
+### Docker secret qua `secrets_dir` có sẵn của pydantic-settings, không viết entrypoint riêng
+Đã kiểm chứng trực tiếp (không đoán): `SettingsConfigDict(secrets_dir=...)` tự đọc file
+`/run/secrets/<field_name>` đè lên field cùng tên, và graceful (chỉ warning, không lỗi)
+khi thư mục không tồn tại — verify bằng cách chạy thử ở máy dev (Windows, không có
+`/run/secrets`). Chỉ bật `secrets_dir` khi thư mục thật sự tồn tại (`os.path.isdir`) để
+tránh warning ồn ào mỗi lần test/dev local. **Cạm bẫy cần nhớ**: pydantic-settings ưu
+tiên biến môi trường/`.env` HƠN secrets — nếu `.env` có dòng rỗng cho field bí mật, nó
+đè mất secret thật. Ghi rõ trong docs/DEPLOY.md, không chỉ trong code comment.
+
+### `/health` dùng `mcp.custom_route` — endpoint có thật trong SDK, đã verify
+Xác nhận bằng cách đọc mã nguồn gói `mcp` đã cài + chạy thử qua Starlette `TestClient`
+(không đoán tên method). Trả 503 khi DSpace down nhưng Docker `HEALTHCHECK` vẫn coi là
+"healthy" (exit 0) nếu request tới được `/health` (bất kể status code 200 hay 503) —
+phân biệt "process còn sống"
+(liveness, việc của Docker restart-policy) với "phụ thuộc ngoài còn sống"
+(readiness, việc của người vận hành theo dõi qua `/health` body). Nếu để Docker restart
+container mỗi khi DSpace tạm down, sẽ gây flapping vô ích (restart không sửa được DSpace
+down).
+
+### `admin_keys.py` là script CLI riêng, không phải MCP tool
+Quản lý `api_keys` (tạo/liệt kê/khóa) là việc VẬN HÀNH của anh Trung, không phải năng lực
+cho AI agent gọi — cố tình KHÔNG expose qua `@mcp.tool()` (một LLM client có quyền tự tạo
+API key cho chính nó sẽ phá vỡ toàn bộ mô hình phân quyền). Chạy trực tiếp qua
+`python -m hpu_library_mcp.admin_keys` hoặc `docker compose exec mcp ...`.
+
+### `docker-compose.yml` không mở port MCP ra ngoài — chỉ bind `127.0.0.1:8800`
+Caddy (chạy trên host, ngoài Compose) mới là cổng ra Internet duy nhất, khớp
+05-security.md §7 "bề mặt public duy nhất là endpoint MCP qua Caddy". Container `mcp`
+không cần biết gì về TLS/domain — tách trách nhiệm rõ ràng, đổi domain/chứng chỉ không
+cần rebuild image.

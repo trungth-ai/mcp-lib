@@ -17,6 +17,8 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 from mcp.server.fastmcp import Context, FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from hpu_library_mcp.config import get_settings
 from hpu_library_mcp.db import Database
@@ -288,6 +290,32 @@ async def find_in_document(
     provider = get_registry().get(source)
     doc = await provider.get_text(id, query=query, page=page, allowed_levels=current_allowed_levels())
     return doc.model_dump(mode="json")
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request: Request) -> JSONResponse:
+    """Health/readiness cho Docker HEALTHCHECK + Caddy — KHÔNG cần API key (Sprint 5).
+
+    Không dùng cho phân quyền/nghiệp vụ — chỉ phản ánh DSpace REST còn gọi được không và
+    các tầng phụ thuộc (vector/auth thật) đã cấu hình chưa (không kiểm tra sâu để tránh
+    health check chậm/tốn kết nối).
+    """
+    settings = get_settings()
+    try:
+        dspace_health = await get_registry().get("dspace").health()
+        dspace_status = dspace_health.status
+        dspace_detail = dspace_health.detail
+    except Exception:
+        logger.exception("health_check_dspace_failed")
+        dspace_status, dspace_detail = "down", "Lỗi không xác định khi kiểm tra DSpace."
+
+    body = {
+        "status": "ok" if dspace_status == "ok" else "degraded",
+        "dspace": {"status": dspace_status, "detail": dspace_detail},
+        "semantic_search_configured": bool(settings.gemini_api_key.get_secret_value() and settings.database_url),
+        "auth_key_store_configured": get_key_store() is not None,
+    }
+    return JSONResponse(body, status_code=200 if body["status"] == "ok" else 503)
 
 
 def main() -> None:
