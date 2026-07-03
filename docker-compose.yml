@@ -27,6 +27,12 @@ services:
     # DEV_STATIC_API_KEY trong .env khi dùng secrets — pydantic-settings ưu tiên env var
     # hơn secrets file, đặt cả 2 sẽ khiến giá trị rỗng trong .env đè mất secret thật
     # (xem docs/DEPLOY.md).
+    environment:
+      # Ép cứng streamable-http bất kể .env nói gì — .env.example mặc định MCP_TRANSPORT=
+      # stdio (tiện cho dev local chạy trực tiếp), nhưng stdio KHÔNG chạy được trong
+      # container (không có stdin liên tục -> thoát ngay code 0 -> restart lặp vô hạn).
+      # `environment:` được ưu tiên hơn `env_file:` cho cùng 1 biến trong Docker Compose.
+      MCP_TRANSPORT: streamable-http
     secrets:
       - database_url
       - dspace_service_password
