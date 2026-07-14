@@ -19,10 +19,16 @@ class Settings(BaseSettings):
     )
 
     # --- DSpace ---
-    dspace_version: Literal["6.3", "v10"] = "6.3"
+    # "6.3": REST cũ (/rest) + Solr Discovery trực tiếp (DSpace6Adapter).
+    # "7.6": REST mới (/server/api) HAL/HATEOAS, Discovery tích hợp trong REST, JWT auth
+    #        (DSpace7Adapter). HPU đã nâng cấp lên DSpace 7.6.5 (xác nhận 2026-07-14 qua
+    #        https://lib.hpu.edu.vn/server/api — dspaceVersion "DSpace 7.6.5").
+    # "v10": chưa triển khai (raise NotImplementedYetError).
+    dspace_version: Literal["6.3", "7.6", "v10"] = "7.6"
     # Cổng REST xác nhận thật 2026-07-03 (anh Trung kiểm tra trực tiếp trên host DSpace,
     # xem docs/DECISIONS.md) — 8088 trước đây chỉ là GIẢ ĐỊNH sai. Cổng Solr CHƯA xác
     # minh (dùng chung port REST chỉ là phỏng đoán, cần kiểm riêng — xem PLAN.md).
+    # (Chỉ dùng cho dspace_version=6.3.)
     dspace_rest_base_url: str = "http://10.1.0.205:8081/rest"
     dspace_solr_base_url: str = "http://10.1.0.205:8081/solr"
     # Tên core/field dưới đây là GIẢ ĐỊNH — xác minh ở Sprint 0 (xem 07-sprints.md).
@@ -48,6 +54,19 @@ class Settings(BaseSettings):
     dspace_solr_field_read: str = "read"
     dspace_solr_anonymous_read_token: str = "g0"
     dspace_public_base_url: str = "https://lib.hpu.edu.vn"
+
+    # --- DSpace 7.x (/server/api) — dùng khi dspace_version="7.6" ---
+    # Base URL REST 7.x đã xác minh thật 2026-07-14 (public HTTPS, không cần LAN như 6.3).
+    dspace7_api_base_url: str = "https://lib.hpu.edu.vn/server/api"
+    # embed 1-shot: lấy item + bundles/bitstreams + mime (format) + collection/community cha
+    # trong đúng 1 request (xác minh thật — xem docs/DECISIONS.md mục DSpace 7).
+    dspace7_item_embed: str = "bundles/bitstreams/format,owningCollection/parentCommunity"
+    # Map tên facet LOGIC (type/year/author) -> tên facet Discovery của DSpace 7. Discovery
+    # 7.x mặc định KHÔNG có facet "type"/"itemtype" (site này chỉ expose author/subject/
+    # dateIssued/...); để trống "" nghĩa là facet đó không khả dụng -> bỏ qua an toàn.
+    dspace7_facet_year: str = "dateIssued"
+    dspace7_facet_author: str = "author"
+    dspace7_facet_type: str = ""  # không có facet type mặc định trên instance HPU (xác minh 2026-07-14)
 
     dspace_service_email: str = ""
     dspace_service_password: SecretStr = SecretStr("")

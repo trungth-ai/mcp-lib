@@ -11,8 +11,10 @@ và [docs/DECISIONS.md](docs/DECISIONS.md) (quyết định implementation).**
 
 ## Tech Stack
 - Python 3.12, FastMCP (`mcp` SDK chính thức), httpx (async), Pydantic v2 + pydantic-settings.
-- Nguồn dữ liệu: DSpace 6.3 REST cũ (`/rest`) + Solr Discovery qua LAN `10.1.0.205:8081`
-  (cổng REST xác nhận thật 2026-07-03; cổng Solr CHƯA xác minh riêng, đang tạm dùng chung).
+- Nguồn dữ liệu: **DSpace 7.6.5** REST mới (`/server/api`, HAL/HATEOAS) qua HTTPS public
+  `https://lib.hpu.edu.vn/server/api` — `DSpace7Adapter` (mặc định từ 2026-07-14, HPU đã
+  nâng cấp; hình dạng API đã XÁC MINH THẬT). Adapter cũ `DSpace6Adapter` (REST `/rest` +
+  Solr qua LAN `10.1.0.205:8081`) vẫn giữ để rollback (`DSPACE_VERSION=6.3`).
 - Vector layer: PostgreSQL + pgvector (`asyncpg`), embedding Gemini `gemini-embedding-001`
   (1536d, REST trực tiếp qua httpx — không dùng SDK `google-genai`).
 - Bóc text: `pdfplumber` (chỉ PDF, thuần Python, không cần Tika/Java).
@@ -54,17 +56,22 @@ src/hpu_library_mcp/
 │   ├── base.py              — interface ResourceProvider (02-architecture.md §4.1)
 │   ├── registry.py          — map source -> provider instance
 │   └── dspace/
-│       ├── auth.py          — login service account, giữ token trong RAM, tự refresh
-│       ├── client.py        — HTTP client mỏng REST (get_json + get_bytes), retry 401
-│       ├── mapping.py       — DC -> Resource, suy diễn access_level (05-security.md §4)
-│       ├── solr_client.py   — HTTP client mỏng Solr (select), 400 vs 5xx/timeout riêng biệt
-│       ├── solr_search.py   — xây query Solr + diễn giải response (facet, highlight)
-│       ├── adapter_base.py  — interface DSpaceAdapter (02-architecture.md §4.2, NFR-4:
-│       │                       đổi 6.3->v10 = viết adapter mới, KHÔNG sửa provider.py)
+│       ├── auth.py          — [6.3] login service account (/rest/login), token RAM, tự refresh
+│       ├── client.py        — [6.3] HTTP client mỏng REST (get_json + get_bytes), retry 401
+│       ├── mapping.py       — [6.3] DC (list phẳng) -> Resource, access_level từ policy
+│       ├── solr_client.py   — [6.3] HTTP client mỏng Solr (select)
+│       ├── solr_search.py   — [6.3] xây query Solr + diễn giải response (facet, highlight)
 │       ├── adapter_v6.py    — DSpace6Adapter: toàn bộ chi tiết REST 6.3/Solr cụ thể
+│       ├── auth_v7.py       — [7.6] login service account JWT + CSRF (/authn/login), token RAM
+│       ├── client_v7.py     — [7.6] HTTP client mỏng /server/api (HAL), tham số anonymous
+│       ├── mapping_v7.py    — [7.6] HAL (metadata dict + embed) -> Resource, access_level
+│       │                       từ endpoint accessStatus (public vs non-public)
+│       ├── adapter_v7.py    — DSpace7Adapter: /server/api + Discovery tích hợp, sort native
+│       ├── adapter_base.py  — interface DSpaceAdapter (02-architecture.md §4.2, NFR-4:
+│       │                       đổi phiên bản = viết adapter mới, KHÔNG sửa provider.py)
 │       └── provider.py      — DSpaceProvider: CHỈ business logic dùng chung (enforce
-│                               quyền, audit, orchestrate search/semantic/get_text),
-│                               gọi qua self._adapter, không biết REST/Solr là gì
+│                               quyền, audit, orchestrate search/semantic/get_text), chọn
+│                               adapter theo dspace_version, không biết REST/Solr/HAL là gì
 ├── vector/
 │   ├── embedding.py         — interface EmbeddingProvider
 │   ├── gemini_embedding.py  — GeminiEmbeddingProvider (REST Gemini, đã verify hình dạng API)
@@ -98,6 +105,23 @@ src/hpu_library_mcp/
   không chứa chi tiết nội bộ (host, stack trace, token...).
 
 ## Gotchas
+- **[7.6] `access_level` chỉ có `public` vs `restricted`** — suy từ endpoint `accessStatus`
+  (`open.access`->public, còn lại->restricted). 7.x đọc resource policy cần admin/JWT (anon
+  bị 401) nên KHÔNG suy được mức `internal` như 6.3; gộp internal->restricted là AN TOÀN
+  (partner vẫn chỉ thấy public, internal-key vẫn thấy cả 3 mức). Xem docs/DECISIONS.md.
+- **[7.6] Chạy ẩn danh** (chưa có service account) — chỉ tải được bitstream `open.access`.
+  Item restricted: anonymous thấy metadata nhưng `files=[]` (không liệt kê được bitstream)
+  và không tải nội dung. Muốn internal-key đọc được nội dung tài liệu hạn chế: điền
+  `DSPACE_SERVICE_EMAIL` + secret password (adapter tự login JWT qua `auth_v7.py`).
+- **[7.6] `library_stats` cho partner đếm cả item metadata-public** — metadata gần như toàn
+  bộ item đều discoverable với anonymous trên instance này, nên `total_items` ẩn danh ==
+  tổng thật (đã đo: 32268 cả hai). KHÔNG rò rỉ nội dung (metadata vốn public trên portal),
+  chỉ là con số đếm không lọc theo quyền tải — nhất quán caveat `total` thô của 6.3.
+- **[7.6] Máy dev có AVG SSL-scanning (MITM)** — cert do "AVG Web/Mail Shield Root" ký,
+  `certifi` không tin -> httpx báo `CERTIFICATE_VERIFY_FAILED`. CHỈ là artifact máy dev
+  (server production không có AVG dùng cert thật). Muốn smoke test HTTPS local: `pip install
+  truststore` rồi `truststore.inject_into_ssl()` (mượn kho tin cậy Windows). KHÔNG tắt
+  verify trong code thư viện.
 - **Máy Windows dev này KHÔNG có route LAN tới `10.1.0.205`**, không có Docker, không có
   `GEMINI_API_KEY` thật. Mọi test chạy bằng mock/fake (respx + fake pool trong
   `tests/conftest.py`) — CHƯA có integration test thật. Sprint 0 (trinh sát Solr/REST

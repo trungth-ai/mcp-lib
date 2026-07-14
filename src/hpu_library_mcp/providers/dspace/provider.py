@@ -36,7 +36,9 @@ from hpu_library_mcp.models import (
 from hpu_library_mcp.providers.base import ResourceProvider
 from hpu_library_mcp.providers.dspace.adapter_base import DSpaceAdapter
 from hpu_library_mcp.providers.dspace.adapter_v6 import DSpace6Adapter
+from hpu_library_mcp.providers.dspace.adapter_v7 import DSpace7Adapter
 from hpu_library_mcp.providers.dspace.client import DSpaceRestClient
+from hpu_library_mcp.providers.dspace.client_v7 import DSpace7Client
 from hpu_library_mcp.providers.dspace.solr_client import SolrClient
 from hpu_library_mcp.security.audit import audit_access
 from hpu_library_mcp.text.extraction import extract_pages, find_matches
@@ -49,18 +51,30 @@ logger = get_logger(__name__)
 def _build_default_adapter(
     settings: Settings, client: DSpaceRestClient | None, solr_client: SolrClient | None
 ) -> DSpaceAdapter:
-    resolved_client = client or DSpaceRestClient(
-        base_url=settings.dspace_rest_base_url,
-        timeout=settings.dspace_http_timeout_seconds,
-        service_email=settings.dspace_service_email,
-        service_password=settings.dspace_service_password.get_secret_value(),
-    )
-    resolved_solr = solr_client or SolrClient(
-        base_url=settings.dspace_solr_base_url,
-        core=settings.dspace_solr_search_core,
-        timeout=settings.dspace_http_timeout_seconds,
-    )
+    if settings.dspace_version == "7.6":
+        # HPU đã nâng cấp lên DSpace 7.6.5 (xác nhận 2026-07-14) — /server/api HAL, Discovery
+        # tích hợp, JWT auth. `client`/`solr_client` (tham số v6) bị bỏ qua.
+        return DSpace7Adapter(
+            client=DSpace7Client(
+                base_url=settings.dspace7_api_base_url,
+                timeout=settings.dspace_http_timeout_seconds,
+                service_email=settings.dspace_service_email,
+                service_password=settings.dspace_service_password.get_secret_value(),
+            ),
+            settings=settings,
+        )
     if settings.dspace_version == "6.3":
+        resolved_client = client or DSpaceRestClient(
+            base_url=settings.dspace_rest_base_url,
+            timeout=settings.dspace_http_timeout_seconds,
+            service_email=settings.dspace_service_email,
+            service_password=settings.dspace_service_password.get_secret_value(),
+        )
+        resolved_solr = solr_client or SolrClient(
+            base_url=settings.dspace_solr_base_url,
+            core=settings.dspace_solr_search_core,
+            timeout=settings.dspace_http_timeout_seconds,
+        )
         return DSpace6Adapter(client=resolved_client, solr_client=resolved_solr, settings=settings)
     # v10: "Sau GĐ1" theo 07-sprints.md — báo lỗi rõ ràng thay vì âm thầm chạy sai adapter.
     raise NotImplementedYetError("DSpace10Adapter", "Sau GĐ1 (khi lên DSpace v10) — xem 07-sprints.md")

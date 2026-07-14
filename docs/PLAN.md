@@ -4,7 +4,35 @@ Kế hoạch đầy đủ theo sprint: xem [../07-sprints.md](../07-sprints.md).
 File này chỉ theo dõi **trạng thái sống** (sprint nào xong, đang làm gì) — cập nhật mỗi
 khi kết thúc một phiên code đáng kể.
 
-## Trạng thái: Sprint 5 + rà soát lỗ hổng xong (2026-07-03) — GĐ1 code xong hết cả 6 sprint
+## Trạng thái: Đã lên DSpace 7.6 (2026-07-14) — DSpace7Adapter chạy thật OK
+
+### Nâng cấp DSpace 6.3 → 7.6.5 (2026-07-14) — ĐÃ NỐI THẬT, chạy end-to-end
+
+HPU nâng cấp thư viện số lên **DSpace 7.6.5** (`https://lib.hpu.edu.vn/server/api`, public
+HTTPS). Viết `DSpace7Adapter` mới (client_v7/auth_v7/mapping_v7/adapter_v7) theo interface
+`DSpaceAdapter` — KHÔNG sửa `DSpaceProvider`/tool nào (NFR-4). Chọn qua `DSPACE_VERSION=7.6`
+(mặc định), 6.3 để rollback. Chi tiết quyết định: docs/DECISIONS.md (mục 2026-07-14).
+
+- **Đã XÁC MINH THẬT** (khác Solr 6.x còn là giả định): probe trực tiếp + smoke test
+  `provider.*` với API thật — health/list_communities(7)/list_collections(79)/get_recent/
+  search(total 2206, facet author+year)/get_item/**get_text bóc PDF ra chữ tiếng Việt**/
+  stats(32268 item) đều chạy. `access_level` suy từ endpoint `accessStatus` (public vs
+  non-public). Item `open.access` trả đủ file PDF + mime + tải nội dung được.
+- **220 test xanh** (195 cũ nguyên vẹn + 25 mới cho v7: mapping/client/auth/adapter +
+  tích hợp qua provider). Test cũ được ghim `DSPACE_VERSION=6.3` qua fixture autouse trong
+  conftest (biến môi trường OS thắng `.env`), KHÔNG sửa assertion nào.
+- **Service account ĐÃ cấu hình + kiểm thật (2026-07-14)**: login JWT+CSRF OK; internal-key
+  `get_text` tải + bóc được chữ tiếng Việt từ tài liệu **restricted**, partner-key bị chặn
+  `ForbiddenError` (có audit). Đã KIỂM AN TOÀN: `accessStatus` tính theo nhóm Anonymous,
+  ĐỘC LẬP với caller — admin JWT KHÔNG làm item restricted thành open.access, nên partner
+  không thấy nhầm. Creds ở `.env` + `secrets/dspace_service_password.txt` (đều gitignore).
+- **Còn để ngỏ (7.6)**: (1) `library_stats` partner đếm cả item metadata-public (không rò
+  rỉ, chỉ là số đếm thô — metadata vốn public trên portal); (2) `ingest.py`/semantic vẫn
+  dùng interface cũ — chạy được với v7 (get_recent/get_text đã v7) nhưng CHƯA chạy embedding
+  thật (thiếu Postgres/GEMINI_API_KEY như trước); (3) đang dùng tài khoản CÁ NHÂN
+  (trungth@) làm service account — nên tạo tài khoản đọc riêng khi có điều kiện.
+
+## Trạng thái cũ: Sprint 5 + rà soát lỗ hổng xong (2026-07-03) — GĐ1 code xong hết cả 6 sprint
 
 ### Deploy thật lần đầu (2026-07-03) — đang chặn ở tầng mạng, không phải code
 
@@ -29,6 +57,22 @@ Anh Trung deploy thử lên host thật (ubuntu210, chạy Docker), gặp 2 vấ
    - **Cổng Solr thật vẫn CHƯA xác nhận** — mới chỉ giả định dùng chung cổng REST
      (8081), cần kiểm riêng (curl trực tiếp từ host DSpace vào chính nó trước, như đã
      làm với `/rest`, để loại trừ vấn đề mạng khỏi câu hỏi "cổng nào").
+
+3. **[2026-07-07] Cập nhật thêm sau khi thử mở Firewall**: đã xác nhận `localhost:8081/solr/#/`
+   mở được Solr Admin UI thật trên chính host DSpace → **Solr dùng CHUNG port 8081 với
+   REST** (giả định trước đó đúng), KHÔNG phải 8983 (tên các rule Firewall cũ như
+   "Allow Solr 8983 Localhost"/"Block Solr 8983 External" gây nhầm lẫn — có vẻ là cấu
+   hình cũ không còn khớp thực tế). Solr version: `solr-spec 4.10.4` (khá cũ, nhưng JSON
+   response format select/facet/highlight vẫn tương thích code hiện tại).
+   - **Phát hiện thêm, KHÔNG liên quan mạng**: Solr Admin báo đỏ
+     `SolrCore Initialization Failures` cho core **`oai`** — `Error opening new searcher`.
+     Đây là lỗi Solr/DSpace thật trên server (index khóa/hỏng hoặc thiếu ổ đĩa), CẦN anh
+     Trung xử lý trực tiếp trên host DSpace (kiểm `write.lock`, log Tomcat/Solr) — không
+     sửa được bằng code MCP. Core MCP thực sự dùng để search (`dspace_solr_search_core`,
+     mặc định `"search"`) CHƯA rõ có bị lỗi tương tự không — cần kiểm riêng qua Core Admin.
+   - Vẫn đang chờ xác nhận: sau khi disable 3 rule "Block ... External"/"Block Tomcat
+     Direct", `curl` từ `ubuntu210` (không phải browser Windows) tới `10.1.0.205:8081`
+     đã thông chưa.
 
 **Việc này KHÔNG sửa được bằng code** — cần anh Trung/quản trị mạng HPU xử lý ở tầng hạ
 tầng (Windows Firewall, hoặc rule Traefik nếu ý định là mọi truy cập phải qua Traefik).

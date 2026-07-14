@@ -4,6 +4,22 @@ from typing import Any
 
 import pytest
 
+from hpu_library_mcp.config import get_settings
+
+
+@pytest.fixture(autouse=True)
+def _pin_dspace_version_for_legacy_suite(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ghim DSPACE_VERSION=6.3 cho toàn bộ test cũ (chúng inject fake client REST 6.x).
+
+    Từ 2026-07-14 HPU lên DSpace 7.6 nên `.env` thật đặt DSPACE_VERSION=7.6 -> `Settings()`
+    trần sẽ chọn adapter v7 (bỏ qua fake v6 -> gọi mạng thật). Biến môi trường OS ưu tiên
+    HƠN file `.env` trong pydantic-settings, nên đặt ở đây khiến mọi `Settings()` trần trong
+    test quay về 6.3 BẤT KỂ `.env`. Test v7 mới truyền thẳng `Settings(dspace_version="7.6")`
+    (init kwarg ưu tiên hơn cả env var) nên không bị ảnh hưởng. Fixture CHỈ thêm tính tất
+    định, không đổi assertion của test nào."""
+    monkeypatch.setenv("DSPACE_VERSION", "6.3")
+    get_settings.cache_clear()
+
 SAMPLE_ITEM: dict[str, Any] = {
     "uuid": "item-uuid-1",
     "handle": "123456789/42",

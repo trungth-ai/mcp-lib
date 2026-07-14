@@ -204,6 +204,71 @@ Caddy (chạy trên host, ngoài Compose) mới là cổng ra Internet duy nhấ
 không cần biết gì về TLS/domain — tách trách nhiệm rõ ràng, đổi domain/chứng chỉ không
 cần rebuild image.
 
+## 2026-07-14 — Nâng cấp DSpace 6.3 → 7.6 (thêm DSpace7Adapter)
+
+HPU nâng cấp thư viện số lên **DSpace 7.6.5** (`https://lib.hpu.edu.vn/server/api`). REST
+7.x khác hẳn 6.x (HAL/HATEOAS, Discovery tích hợp trong REST, JWT auth) nên viết
+`DSpace7Adapter` mới theo đúng interface `DSpaceAdapter` — KHÔNG sửa `DSpaceProvider` hay
+tool nào (đúng NFR-4, kiểm chứng bằng 195 test cũ vẫn xanh nguyên). Chọn adapter theo
+`DSPACE_VERSION` (7.6 mặc định; 6.3 để rollback).
+
+### Hình dạng API 7.x ĐÃ XÁC MINH THẬT (khác giả định Solr 6.x)
+API 7.x public qua HTTPS nên xác minh trực tiếp được (khác 6.3 phải có LAN — Sprint 0 chưa
+chạy). Đã probe thật 2026-07-14: root báo `DSpace 7.6.5`; item embed 1-shot
+`?embed=bundles/bitstreams/format,owningCollection/parentCommunity` trả đủ metadata + mime
++ collection/community; Discovery `sort=dc.date.accessioned,DESC` chạy (recent KHÔNG cần
+over-fetch như 6.3); filter `f.<facet>=<v>,equals` + `f.dateIssued=[lo TO hi],equals` +
+`scope=<uuid>`; handle -> uuid qua `/pid/find?id=` (302, follow redirect); CSRF qua
+`GET /security/csrf` (204 + header DSPACE-XSRF-TOKEN). Smoke test thật: health/communities/
+collections/recent/search/get_item/get_text (bóc PDF ra chữ tiếng Việt)/stats đều chạy.
+
+### `access_level` 7.x suy từ endpoint `accessStatus`, KHÔNG từ resource policy
+Resource policy 7.x (`/authz/resourcepolicies`) cần admin/JWT (anonymous bị 401). Thay vào
+đó dùng `GET /core/items/{uuid}/accessStatus` (chạy ẩn danh): `open.access`->`public`, còn
+lại (`embargo`/`restricted`/`metadata.only`/lỗi)->`restricted` (fail-safe). Hệ quả: 7.x chỉ
+phân biệt public vs non-public, gộp mức `internal` của 6.3 vào `restricted`. **An toàn** vì
+ma trận quyền không đổi: partner (chỉ `public`) vẫn không thấy tài liệu non-public; internal
+(cả 3 mức) vẫn thấy tất cả — chỉ mất nhãn phân biệt internal/restricted trong output, không
+mất khả năng chặn. Nếu sau này cần khôi phục mức internal chính xác: cấp service account
+admin rồi đọc resource policy (chi phí: thêm 1 request/item + phụ thuộc quyền admin).
+
+### Đọc ẩn danh mặc định; service account (JWT) là tùy chọn để mở nội dung hạn chế
+Chưa có service account -> adapter đọc ẩn danh: tải được bitstream `open.access`, item
+restricted chỉ thấy metadata (`files=[]`). Khi điền `DSPACE_SERVICE_EMAIL` + password,
+`auth_v7.py` tự login (CSRF->JWT) và đính Bearer -> internal-key đọc được nội dung tài liệu
+hạn chế. `client_v7` có cờ `anonymous=True` để `library_stats` (partner) gọi Discovery ẩn
+danh cho DSpace tự lọc theo quyền Anonymous — thay cơ chế `fq=read:g0` của Solr 6.x.
+
+### [2026-07-14] Cấu hình service account + KIỂM AN TOÀN accessStatus độc lập caller
+Đã cấu hình tài khoản đọc HPU (`.env` + `secrets/dspace_service_password.txt`, đều gitignore)
+và kiểm thật:
+- Login JWT+CSRF OK; internal-key `get_text` tải + bóc chữ tiếng Việt từ tài liệu
+  **restricted**; partner-key bị chặn `ForbiddenError` (có audit) — đúng ma trận quyền.
+- **Rủi ro đã loại trừ**: DSpace tính `accessStatus` theo nhóm **Anonymous**, KHÔNG theo
+  quyền của caller. Đã đo trực tiếp: cùng 1 item restricted trả `restricted` CẢ khi gọi
+  bằng admin JWT lẫn ẩn danh; item open.access trả `open.access`. Nghĩa là dùng service
+  account admin KHÔNG làm tài liệu hạn chế bị hiểu nhầm thành public -> partner không thấy
+  nhầm. Đây là điều kiện tiên quyết để yên tâm dùng accessStatus (thay vì phải ép mọi lần
+  gọi accessStatus chạy ẩn danh).
+- Tài khoản này đọc được resource policy (có quyền admin) -> VỀ SAU có thể khôi phục mức
+  `internal` chính xác từ policy nếu cần, nhưng hiện GIỮ accessStatus (đơn giản, đã chứng
+  minh an toàn, không phụ thuộc quyền admin, không tốn thêm request/item).
+- Đang dùng tài khoản CÁ NHÂN (trungth@) — ghi nợ: nên thay bằng tài khoản đọc chuyên dụng.
+
+### `library_stats` partner: lọc ẩn danh KHÔNG giảm count trên instance này (đã đo)
+`total_items` ẩn danh == tổng thật (32268) vì metadata gần như mọi item đều discoverable với
+anonymous (restricted chỉ chặn TẢI bitstream, không ẩn metadata). KHÔNG rò rỉ nội dung
+(metadata vốn công khai trên portal), chỉ là con số đếm không phản ánh "bao nhiêu item
+partner tải được" — cùng bản chất caveat `total` thô của `search_library` 6.3. Muốn stats
+public-only chính xác cần index `accessStatus` vào Discovery (ngoài phạm vi lần này).
+
+### Tool `scope` (metadata/fulltext/both) bị BỎ QUA ở 7.x
+Discovery 7.x tìm cả metadata lẫn full-text bằng 1 tham số `query` (không tách `df` như
+Solr 6.x); highlight lấy từ `hitHighlights` mỗi hit. Giữ nguyên chữ ký tool (client không
+phải đổi), chỉ là 7.x không phân biệt 3 scope — không ảnh hưởng kết quả, chỉ là `scope`
+thành no-op. Facet `type` mặc định KHÔNG có trên Discovery HPU (chỉ author/subject/
+dateIssued/...) nên `filters.type`/facet "type" bị bỏ qua an toàn (config `dspace7_facet_type=""`).
+
 ## 2026-07-03 — Rà soát lỗ hổng sau Sprint 5
 
 ### Tách `DSpaceAdapter`/`DSpace6Adapter` — nợ kiến trúc từ Sprint 1-2, phát hiện khi tự rà soát lại
